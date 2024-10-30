@@ -11,6 +11,12 @@ This is a research tool developed for the Fall 2024 'Computational Social Scienc
 3. Paste the API key in the .env file as GEMINI_API_KEY1.
 4. You have to create a few other accounts and add GEMINI_API_KEY2, GEMINI_API_KEY3, and GEMINI_API_KEY4.
 
+#### Microsoft Edge Driver
+
+1. Download the Microsoft Edge Driver at: `/edgedriver_win64/msedgedriver.exe`
+
+This has implications for the Screenshots.py program. Adopt it for Mac OS if you have one.
+
 #### Running the application
 
 1. Paste the Tweet links on to `trumptweets.csv`.

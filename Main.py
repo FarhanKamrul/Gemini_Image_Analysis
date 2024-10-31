@@ -4,6 +4,7 @@ from google.generativeai.types import safety_types
 from dotenv import load_dotenv
 import json
 import time
+from tqdm import tqdm
 
 # Load environment variables
 load_dotenv()
@@ -30,7 +31,6 @@ current_key_index = 0
 def configure_api():
     global current_key_index
     genai.configure(api_key=api_keys[current_key_index])
-    print(f"Configured with API key: GEMINI_API_KEY{current_key_index + 1}")
 
 # Initial configuration
 configure_api()
@@ -67,10 +67,10 @@ safety_settings = [
 completeness_path = "Completeness.jpg"
 screenshots_root_folder = "Screenshots/trump/replies"
 
-# Updated prompt to improve sentiment analysis
+# Prompt (unchanged)
 prompt = (
     "Analyze the given image files. Extract any relevant Twitter interaction details for each complete Tweet, Reply, or Quote, ignoring incomplete ones. "
-    "The first image shows a sample difference between complete and incomplete tweet.\n\n"
+    "The first image shows a sample difference between complete and incomplete tweet; and identifies objects within complete tweet.\n\n"
     "Only Analyze the second image. Provide the details in the following JSON format: \n\n"
     "{\n"
     "  \"tweets\": [\n"
@@ -79,112 +79,99 @@ prompt = (
     "      \"content_type\": \"tweet\",  # Possible values: original tweet (only Donald J. Trump's Tweets), reply (All other Tweets)\n"
     "      \"text_body\": \"\",  # Extracted text content from the tweet/reply/quote\n"
     "      \"username\": \"\",  # Username of the tweet\n"
-    "      \"image_text_description\": \"\", # Description of the image (with emotional traits) associated with the tweet. If no image, leave empty. \n"
+    "      \"image_text_description\": \"\", # Describe the image from the perspective of the creator of the image. Convey the associated emotions. \n"
     "      \"likes\": 0,\n"
     "      \"replies\": 0,\n"
     "      \"retweets\": 0,\n"
     "      \"views\": 0,\n"
     "      \"time_of_post\": \"\",  # Time when the content was posted\n"
+    "      \"promotional_or_irrelevant\": false,  # true if the tweet is promotional or irrelevant to the campaign, false otherwise\n"
     "      \"sentiment_scores\": {  # Scored between -1 to 1, accounting for both text and image. 0 indicates not present, -1 indicates extreme opposite and 1 indicates extreme value for said sentiment\n"
-    "        \"supportive\": 0.0,    # -1: strongly against, 0: neutral, 1: strongly supportive\n"
-    "        \"hostile\": 0.0,       # -1: extremely friendly, 0: neutral, 1: extremely hostile\n"
-    "        \"sarcastic\": 0.0,     # -1: no sarcasm, 1: highly sarcastic\n"
-    "        \"ambivalent\": 0.0,    # -1: no mixed feelings, 1: extremely ambivalent\n"
-    "        \"nationalist\": 0.0,   # -1: anti-nationalist, 1: highly nationalist\n"
-    "        \"anti_elite\": 0.0,    # -1: pro-elite, 1: highly anti-elite\n"
-    "        \"fearful\": 0.0,       # -1: no fear, 1: extreme fear present\n"
-    "        \"optimistic\": 0.0,    # -1: extremely pessimistic, 1: highly optimistic\n"
-    "        \"skeptical\": 0.0,     # -1: not skeptical, 1: highly skeptical\n"
-    "        \"disengaged\": 0.0     # -1: highly engaged, 1: extremely disengaged\n"
+    "        \"pro_trump\": 0.0,       # -1: strongly anti-Trump, 0: neutral, 1: strongly pro-Trump\n"
+    "        \"hostile_to_trump\": 0.0, # -1: friendly to Trump, 0: neutral, 1: extremely hostile to Trump\n"
+    "        \"sarcastic_about_trump\": 0.0, # -1: no sarcasm about Trump, 1: highly sarcastic about Trump\n"
+    "        \"ambivalent_about_trump\": 0.0, # -1: clear stance on Trump, 1: extremely ambivalent about Trump\n"
+    "        \"nationalist_pro_trump\": 0.0, # -1: anti-nationalist/anti-Trump, 1: highly nationalist in support of Trump\n"
+    "        \"anti_elite_pro_trump\": 0.0, # -1: pro-elite/anti-Trump, 1: highly anti-elite in support of Trump\n"
+    "        \"fearful_pro_trump\": 0.0, # -1: no fear, pro-Trump, 1: extreme fear, anti-Trump\n"
+    "        \"optimistic_about_trump\": 0.0, # -1: pessimistic about Trump, 1: highly optimistic about Trump\n"
+    "        \"skeptical_of_trump\": 0.0, # -1: trusting of Trump, 1: highly skeptical of Trump\n"
+    "        \"disengaged_from_trump\": 0.0 # -1: highly engaged with Trump, 1: extremely disengaged from Trump\n"
     "      }\n"
     "    }\n"
     "  ]\n"
     "}"
 )
+
 # Create the model instance using gemini-1.5-flash-8b
 def create_model():
-    try:
-        model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash-8b",
-            generation_config=generation_config,
-            safety_settings=safety_settings
-        )
-        print("Model created successfully.")
-        return model
-    except Exception as e:
-        print(f"Error creating model: {e}")
-        exit(1)
+    return genai.GenerativeModel(
+        model_name="gemini-1.5-flash-8b",
+        generation_config=generation_config,
+        safety_settings=safety_settings
+    )
 
 model = create_model()
+
+# Count total number of PNG files
+total_files = sum(len([f for f in os.listdir(os.path.join(screenshots_root_folder, d)) if f.endswith('.png')])
+                  for d in os.listdir(screenshots_root_folder) if os.path.isdir(os.path.join(screenshots_root_folder, d)))
 
 # Loop through each folder in the screenshots root folder and process the PNG files
 results = []
 output_file = "twitter_analysis_results.json"
 
-for folder_name in os.listdir(screenshots_root_folder):
-    folder_path = os.path.join(screenshots_root_folder, folder_name)
+with tqdm(total=total_files, desc="Processing images") as pbar:
+    for folder_name in os.listdir(screenshots_root_folder):
+        folder_path = os.path.join(screenshots_root_folder, folder_name)
 
-    # Check if it's a directory and treat it as a tweet ID folder
-    if os.path.isdir(folder_path):
-        tweet_id = folder_name
+        # Check if it's a directory and treat it as a tweet ID folder
+        if os.path.isdir(folder_path):
+            tweet_id = folder_name
 
-        for file_name in os.listdir(folder_path):
-            if file_name.endswith(".png"):
-                file_path = os.path.join(folder_path, file_name)
+            for file_name in os.listdir(folder_path):
+                if file_name.endswith(".png"):
+                    file_path = os.path.join(folder_path, file_name)
 
-                retries = 0
-                max_retries = len(api_keys)
+                    retries = 0
+                    max_retries = len(api_keys)
 
-                while retries < max_retries:
-                    try:
-                        # Upload the completeness reference image again after switching keys
-                        completeness_reference = genai.upload_file(completeness_path)
-                        # Upload the screenshot
-                        file_reference = genai.upload_file(file_path)
-                        print(f"Uploaded screenshot: {file_name} from folder: {tweet_id}")
-
-                        # Send request to the model with text prompt and the two images
-                        response = model.generate_content(
-                            [prompt, completeness_reference, file_reference]
-                        )
-
-                        # Store response JSON with the tweet ID
-                        response_data = {
-                            "tweet_id": tweet_id,
-                            "file_name": file_name,
-                            "response": response.text
-                        }
-                        results.append(response_data)
-
-                        # Save results to a JSON file after processing each image
+                    while retries < max_retries:
                         try:
+                            # Upload the completeness reference image again after switching keys
+                            completeness_reference = genai.upload_file(completeness_path)
+                            # Upload the screenshot
+                            file_reference = genai.upload_file(file_path)
+
+                            # Send request to the model with text prompt and the two images
+                            response = model.generate_content(
+                                [prompt, completeness_reference, file_reference]
+                            )
+
+                            # Store response JSON with the tweet ID
+                            response_data = {
+                                "tweet_id": tweet_id,
+                                "file_name": file_name,
+                                "response": response.text
+                            }
+                            results.append(response_data)
+
+                            # Save results to a JSON file after processing each image
                             with open(output_file, "w") as json_file:
                                 json.dump(results, json_file, indent=4)
-                            print(f"Results saved to {output_file} after processing {file_name}")
+
+                            break
+
                         except Exception as e:
-                            print(f"Error saving results to JSON file after processing {file_name}: {e}")
+                            # Cycle to the next API key regardless of error type
+                            current_key_index = (current_key_index + 1) % len(api_keys)
+                            if current_key_index == 0:
+                                time.sleep(30)
+                            configure_api()
+                            model = create_model()
 
-                        break
+                        retries += 1
 
-                    except Exception as e:
-                        print(f"Error processing {file_name} in folder {tweet_id} with API key {current_key_index + 1}: {e}")
+                    pbar.update(1)
 
-                        # Cycle to the next API key regardless of error type
-                        current_key_index = (current_key_index + 1) % len(api_keys)
-                        if current_key_index == 0:
-                            print("All API keys exhausted. Waiting for 30 seconds before retrying...")
-                            time.sleep(30)
-                        configure_api()
-                        model = create_model()
-
-                    retries += 1
-
-# Save any remaining results to a JSON file after processing all images
-try:
-    with open(output_file, "w") as json_file:
-        json.dump(results, json_file, indent=4)
-    print(f"Final results saved to {output_file}")
-except Exception as e:
-    print(f"Error saving final results to JSON file: {e}")
-
-
+print(f"Analysis complete. Results saved to {output_file}")

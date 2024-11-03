@@ -24,7 +24,7 @@ def kill_edge_processes():
 kill_edge_processes()
 
 # Set the path to Edge WebDriver
-edge_driver_path = '/edgedriver_win64/msedgedriver.exe'
+edge_driver_path = '../Computational Social Science/edgedriver_win64/msedgedriver.exe'
 service = Service(edge_driver_path)
 
 # Specify the path to your Edge user data directory and the profile directory

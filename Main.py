@@ -1,10 +1,8 @@
 import os
 import google.generativeai as genai
-from google.generativeai.types import safety_types
 from dotenv import load_dotenv
 import json
 import time
-from tqdm import tqdm
 
 # Load environment variables
 load_dotenv()
@@ -31,147 +29,109 @@ current_key_index = 0
 def configure_api():
     global current_key_index
     genai.configure(api_key=api_keys[current_key_index])
+    print(f"Configured with API key: GEMINI_API_KEY{current_key_index + 1}")
 
-# Initial configuration
+# Initial API configuration
 configure_api()
 
-# Define the model configuration
-generation_config = {
-    "temperature": 0.3,
-    "top_p": 0.95,
-    "top_k": 40,
-    "max_output_tokens": 1024,
-}
+# Load the original JSON file
+input_file = "twitter_analysis_results.json"
+output_file = "twitter_analysis_results_1.json"
 
-# Define safety settings
-safety_settings = [
-    {
-        "category": safety_types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-        "threshold": safety_types.HarmBlockThreshold.BLOCK_NONE
-    },
-    {
-        "category": safety_types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-        "threshold": safety_types.HarmBlockThreshold.BLOCK_NONE
-    },
-    {
-        "category": safety_types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-        "threshold": safety_types.HarmBlockThreshold.BLOCK_NONE
-    },
-    {
-        "category": safety_types.HarmCategory.HARM_CATEGORY_HARASSMENT,
-        "threshold": safety_types.HarmBlockThreshold.BLOCK_NONE
-    }
-]
+try:
+    with open(input_file, "r") as file:
+        data = json.load(file)
+except Exception as e:
+    print(f"Error loading input JSON file: {e}")
+    exit()
 
-# Path to completeness reference image and screenshots root folder
-completeness_path = "Completeness.jpg"
-screenshots_root_folder = "Screenshots/trump/replies"
+# Function to generate prompt for each entry
+def generate_prompt(entry):
+    tweet_id = entry.get("tweet_id", "")
+    file_name = entry.get("file_name", "")
+    original_response = entry.get("response", "")
 
-# Prompt (unchanged)
-prompt = (
-    "Analyze the given image files. Extract any relevant Twitter interaction details for each complete Tweet, Reply, or Quote, ignoring incomplete ones. "
-    "The first image shows a sample difference between complete and incomplete tweet; and identifies objects within complete tweet.\n\n"
-    "Only Analyze the second image. Provide the details in the following JSON format: \n\n"
-    "{\n"
-    "  \"tweets\": [\n"
-    "    {\n"
-    "      \"completeness\": \"\",  # Possible values: 1 (complete), 0 (incomplete)\n"
-    "      \"content_type\": \"tweet\",  # Possible values: original tweet (only Donald J. Trump's Tweets), reply (All other Tweets)\n"
-    "      \"text_body\": \"\",  # Extracted text content from the tweet/reply/quote\n"
-    "      \"username\": \"\",  # Username of the tweet\n"
-    "      \"image_text_description\": \"\", # Describe the image from the perspective of the creator of the image. Convey the associated emotions. \n"
-    "      \"likes\": 0,\n"
-    "      \"replies\": 0,\n"
-    "      \"retweets\": 0,\n"
-    "      \"views\": 0,\n"
-    "      \"time_of_post\": \"\",  # Time when the content was posted\n"
-    "      \"promotional_or_irrelevant\": false,  # true if the tweet is promotional or irrelevant to the campaign, false otherwise\n"
-    "      \"sentiment_scores\": {  # Scored between -1 to 1, accounting for both text and image. 0 indicates not present, -1 indicates extreme opposite and 1 indicates extreme value for said sentiment\n"
-    "        \"pro_trump\": 0.0,       # -1: strongly anti-Trump, 0: neutral, 1: strongly pro-Trump\n"
-    "        \"hostile_to_trump\": 0.0, # -1: friendly to Trump, 0: neutral, 1: extremely hostile to Trump\n"
-    "        \"sarcastic_about_trump\": 0.0, # -1: no sarcasm about Trump, 1: highly sarcastic about Trump\n"
-    "        \"ambivalent_about_trump\": 0.0, # -1: clear stance on Trump, 1: extremely ambivalent about Trump\n"
-    "        \"nationalist_pro_trump\": 0.0, # -1: anti-nationalist/anti-Trump, 1: highly nationalist in support of Trump\n"
-    "        \"anti_elite_pro_trump\": 0.0, # -1: pro-elite/anti-Trump, 1: highly anti-elite in support of Trump\n"
-    "        \"fearful_pro_trump\": 0.0, # -1: no fear, pro-Trump, 1: extreme fear, anti-Trump\n"
-    "        \"optimistic_about_trump\": 0.0, # -1: pessimistic about Trump, 1: highly optimistic about Trump\n"
-    "        \"skeptical_of_trump\": 0.0, # -1: trusting of Trump, 1: highly skeptical of Trump\n"
-    "        \"disengaged_from_trump\": 0.0 # -1: highly engaged with Trump, 1: extremely disengaged from Trump\n"
-    "      }\n"
-    "    }\n"
-    "  ]\n"
-    "}"
-)
-
-# Create the model instance using gemini-1.5-flash-8b
-def create_model():
-    return genai.GenerativeModel(
-        model_name="gemini-1.5-flash-8b",
-        generation_config=generation_config,
-        safety_settings=safety_settings
+    prompt = (
+        f"The response received is not in valid JSON format. Please convert the following response into a valid JSON object. "
+        f"Follow this format strictly:\n\n"
+        "{\n"
+        "  \"tweet_id\": \"<tweet_id>\",\n"
+        "  \"file_name\": \"<file_name>\",\n"
+        "  \"response\": {\n"
+        "    \"tweets\": [\n"
+        "      {\n"
+        "        \"completeness\": \"<1 or 0>\",\n"
+        "        \"content_type\": \"<tweet or reply>\",\n"
+        "        \"text_body\": \"<text content>\",\n"
+        "        \"username\": \"<username>\",\n"
+        "        \"image_text_description\": \"<description>\",\n"
+        "        \"likes\": <integer>,\n"
+        "        \"replies\": <integer>,\n"
+        "        \"retweets\": <integer>,\n"
+        "        \"views\": <integer>,\n"
+        "        \"time_of_post\": \"<date and time>\",\n"
+        "        \"promotional_or_irrelevant\": <true or false>,\n"
+        "        \"pro_trump\": <float>,\n"
+        "        \"hostile_to_trump\": <float>,\n"
+        "        \"sarcastic_about_trump\": <float>,\n"
+        "        \"ambivalent_about_trump\": <float>,\n"
+        "        \"nationalist_pro_trump\": <float>,\n"
+        "        \"anti_elite_pro_trump\": <float>,\n"
+        "        \"fearful_pro_trump\": <float>,\n"
+        "        \"optimistic_about_trump\": <float>,\n"
+        "        \"skeptical_of_trump\": <float>,\n"
+        "        \"disengaged_from_trump\": <float>\n"
+        "      }\n"
+        "    ]\n"
+        "  }\n"
+        "}\n\n"
+        f"Convert the following response:\n{original_response}"
     )
+    return prompt
 
-model = create_model()
-
-# Count total number of PNG files
-total_files = sum(len([f for f in os.listdir(os.path.join(screenshots_root_folder, d)) if f.endswith('.png')])
-                  for d in os.listdir(screenshots_root_folder) if os.path.isdir(os.path.join(screenshots_root_folder, d)))
-
-# Loop through each folder in the screenshots root folder and process the PNG files
+# Function to send each entry to the model, validate, and store the corrected JSON
 results = []
-output_file = "twitter_analysis_results.json"
+for entry in data:
+    retries = 0
+    max_retries = len(api_keys)
 
-with tqdm(total=total_files, desc="Processing images") as pbar:
-    for folder_name in os.listdir(screenshots_root_folder):
-        folder_path = os.path.join(screenshots_root_folder, folder_name)
+    while retries < max_retries:
+        try:
+            # Generate prompt from the entry
+            prompt = generate_prompt(entry)
+            response = genai.generate_content(prompt=prompt)
+        except Exception as e:
+            print(f"Error generating content for tweet_id: {entry.get('tweet_id', '')}: {e}")
+            retries += 1
+            continue
 
-        # Check if it's a directory and treat it as a tweet ID folder
-        if os.path.isdir(folder_path):
-            tweet_id = folder_name
+            # Parse and validate response
+            try:
+                response_data = json.loads(response["candidates"][0]["content"])
+                response_data["tweet_id"] = entry.get("tweet_id", "")
+                response_data["file_name"] = entry.get("file_name", "")
+                results.append(response_data)
+                print(f"Valid JSON received and processed for tweet_id: {entry.get('tweet_id', '')}")
+                break
 
-            for file_name in os.listdir(folder_path):
-                if file_name.endswith(".png"):
-                    file_path = os.path.join(folder_path, file_name)
+            except json.JSONDecodeError:
+                print(f"Invalid JSON response received for tweet_id: {entry.get('tweet_id', '')}. Retrying with correction prompt.")
 
-                    retries = 0
-                    max_retries = len(api_keys)
+                # Retry logic with next API key
+                current_key_index = (current_key_index + 1) % len(api_keys)
+                configure_api()
 
-                    while retries < max_retries:
-                        try:
-                            # Upload the completeness reference image again after switching keys
-                            completeness_reference = genai.upload_file(completeness_path)
-                            # Upload the screenshot
-                            file_reference = genai.upload_file(file_path)
+                # If we've cycled through all keys, wait and retry
+                if current_key_index == 0:
+                    print("All API keys exhausted. Waiting for 30 seconds before retrying...")
+                    time.sleep(30)
 
-                            # Send request to the model with text prompt and the two images
-                            response = model.generate_content(
-                                [prompt, completeness_reference, file_reference]
-                            )
+            retries += 1
 
-                            # Store response JSON with the tweet ID
-                            response_data = {
-                                "tweet_id": tweet_id,
-                                "file_name": file_name,
-                                "response": response.text
-                            }
-                            results.append(response_data)
-
-                            # Save results to a JSON file after processing each image
-                            with open(output_file, "w") as json_file:
-                                json.dump(results, json_file, indent=4)
-
-                            break
-
-                        except Exception as e:
-                            # Cycle to the next API key regardless of error type
-                            current_key_index = (current_key_index + 1) % len(api_keys)
-                            if current_key_index == 0:
-                                time.sleep(30)
-                            configure_api()
-                            model = create_model()
-
-                        retries += 1
-
-                    pbar.update(1)
-
-print(f"Analysis complete. Results saved to {output_file}")
+# Save valid JSON entries to a new file
+try:
+    with open(output_file, "w") as file:
+        json.dump(results, file, indent=4)
+    print(f"Final results saved to {output_file}")
+except Exception as e:
+    print(f"Error saving final results to JSON file: {e}")
